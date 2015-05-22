@@ -1,3 +1,6 @@
+#ifndef READCONFFILE_H
+#define READCONFFILE_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,3 +19,5 @@ void AnalyseString(char * string) ;
 void ShowCfg() ;
 char * QueryValue(char * item , char * field) ;
 
+
+#endif

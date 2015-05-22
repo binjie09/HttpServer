@@ -10,7 +10,7 @@ void writelogstring(char * str)
 	log_file=fopen(LOG_FILE_PATH,"a");
 	time(&now);
 	timenow = localtime(&now);
-	sprintf(date,"[%2d/%2d/%d %2d:%2d:%2d]",(1+timenow->tm_mon),timenow->tm_mday,(1900+timenow->tm_year),timenow->tm_hour,timenow->tm_min,timenow->tm_sec);
+	sprintf(date,"[%d-%2d-%2d %2d:%2d:%2d]",(1900+timenow->tm_year),(1+timenow->tm_mon),timenow->tm_mday,timenow->tm_hour,timenow->tm_min,timenow->tm_sec);
 	for(i=0;i<(int)strlen(date);i++)
 	{
 		if(i==11) continue ;
@@ -58,11 +58,11 @@ int ReadOneLine(int sock, char *buf, int size)
 //404
 void SendNotFound(int client)
 {
-	char buf[1024];
+	char buf[BUFFER_SIZE];
 
 	sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf(buf, SERVER_STRING);
+	sprintf( buf ,"Server: %s\r\n" , SERVER_VERSION );
 	send(client, buf, strlen(buf), 0);
 	sprintf(buf, "Connection: close\r\n");
 	send(client, buf, strlen(buf), 0);
@@ -85,7 +85,7 @@ void SendNotFound(int client)
 //500
 void SendInternalError(int client)
 {
- char buf[1024];
+ char buf[BUFFER_SIZE];
 
  sprintf(buf, "HTTP/1.0 500 Internal Server Error\r\n");
  send(client, buf, strlen(buf), 0);
@@ -100,11 +100,11 @@ void SendInternalError(int client)
 //501
 void SendUnimplementedMethod(int client)
 {
-	char buf[1024];
+	char buf[BUFFER_SIZE];
 	
 	sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf(buf, SERVER_STRING);
+	sprintf( buf ,"Server: %s\r\n" , SERVER_VERSION );
 	send(client, buf, strlen(buf), 0);
 	sprintf(buf, "Connection: close\r\n");
 	send(client, buf, strlen(buf), 0);
@@ -125,7 +125,7 @@ void SendUnimplementedMethod(int client)
 //400
 void SendBadRequest(int client)
 {
-	char buf[1024];
+	char buf[BUFFER_SIZE];
 	
 	sprintf(buf, "HTTP/1.0 400 BAD REQUEST\r\n");
 	send(client, buf, sizeof(buf), 0);
@@ -144,11 +144,11 @@ void SendBadRequest(int client)
 //301
 void SendMovedPermanently(int client , char * newUrl)
 {
-	char buf[1024];
+	char buf[BUFFER_SIZE];
 	
 	strcpy(buf, "HTTP/1.0 301 Moved Permanently\r\n");
 	send(client, buf, strlen(buf), 0);
-	strcpy(buf, SERVER_STRING);
+	sprintf( buf ,"Server: %s\r\n" , SERVER_VERSION );
 	send(client, buf, strlen(buf), 0);
 	sprintf(buf, "Location: %s\r\n", newUrl);
 	send(client, buf, strlen(buf), 0);
@@ -160,60 +160,84 @@ void SendMovedPermanently(int client , char * newUrl)
 	send(client, buf, strlen(buf), 0);
 }
 
-//200 header
-void SendOkHeaders(int client)
-{
-	char buf[1024];
-	
-	strcpy(buf, "HTTP/1.0 200 OK\r\n");
-	send(client, buf, strlen(buf), 0);
-	strcpy(buf, SERVER_STRING);
-	send(client, buf, strlen(buf), 0);
-	sprintf(buf, "Connection: close\r\n");
-	send(client, buf, strlen(buf), 0);
-}
 
 //200 content
-void SendHtmlContent(int client, char * path )
+long SendHtmlContent(int client, char * path )
 {
 	FILE *resource ;
-	char buf[1448];
+	char buf[BUFFER_SIZE];
 	char ContentType[50] ;
-	int len ; 
+	int len ;
+	int flag;
+	long fileLength ;
+	char fileMD5[MD5_STR_LEN+1];
+	long fStart = 0;
+	long fEnd = -1 ;
+	long fSend = 0 ;
 	
 	GetContentTypeByExName(path , ContentType ) ;
 	//printf( "\tContentType : %s\n" , ContentType ) ;
 	resource = fopen( path , "rb") ;
+
+	//Get File Size 
+	fseek(resource, 0L, SEEK_END); // go to file end
+	fileLength = ftell(resource); //Get offset from head
+	flag = Compute_file_md5(path, fileMD5);
+	if( flag != 0 ){
+		fileMD5[0] = '\0' ;
+	}
+	sprintf(buf , "\"%s\"" , fileMD5 ) ;
+	
+	flag = 0 ;
+	fEnd=fileLength -1 ;
+	if( strlen( HTTP_IFRANGE) > 10 ) 
+	{
+		if( ! strncasecmp( HTTP_IFRANGE ,buf , strlen(HTTP_IFRANGE) )  ) 
+		{
+			flag = 1 ;
+			printf( "===> [%d] HTTP_RANGE: %s\n", client, HTTP_RANGE) ;
+			sscanf(HTTP_RANGE,"bytes=%ld-%ld",&fStart,&fEnd) ;
+		}
+	}
+	if( fStart > fileLength -1 ) fStart = fileLength - 1 ;
+	if( fStart < 0 ) fStart = 0 ;
+	if( fEnd > fileLength -1  ) fEnd = fileLength - 1 ;
+	if( fEnd < 0 ) fEnd = fileLength - 1 ;
+	fSend = fEnd-fStart+1 ;
 	
 	
-	SendOkHeaders(client) ;
-	
-	sprintf(buf, "Content-Type: %s\r\n", ContentType);
-	send(client, buf, strlen(buf), 0);
+	sprintf( buf ,"HTTP/1.0 200 OK\r\nServer: %s\r\nConnection: close\r\nContent-Type: %s\r\nETag: \"%s\"\r\nAccept-Ranges: bytes\r\nContent-Length: %ld\r\n" , SERVER_VERSION ,ContentType,fileMD5,fSend);
+	send(client, buf, strlen(buf), 0);	
+	if( flag == 1 ) 
+	{
+		sprintf( buf ,"Content-Range: bytes %ld-%ld/%ld\r\n",fStart,fEnd,fileLength) ;
+		send(client, buf, strlen(buf), 0);	
+	}
 	strcpy(buf, "\r\n");
 	send(client, buf, strlen(buf), 0);
-	int ind = 0 ;
-	len = fread( buf , sizeof(char) , sizeof(buf) , resource) ;
-	while (len == sizeof(buf) )
+	
+	fseek(resource, fStart, SEEK_SET); // move from head
+		
+	while(  fSend > 0 )
 	{
-		if( send(client, buf, len, 0) == -1 )
+		
+		if(  fSend > BUFFER_SIZE  ) len = BUFFER_SIZE ;
+		else len = fSend ;
+		//printf( "==================================> %ld  -- %d   ---  %d \n" ,fSend  , len , client ) ;
+
+		
+		len = fread( buf , sizeof(char) , len , resource) ;
+		if( send(client, buf, len, 0) < 0 )
 		{
-			fclose(resource) ;
-			return ;
+			break ;
 		}
 		
-		len = fread( buf , sizeof(char) , sizeof(buf) , resource) ;
-		printf( "==================================> %d \n", ++ind ) ;
-		//usleep(1000);
+		fSend -= len ;
 		
-	}
-	
-	if( len > 0 ) 
-	{
-		send(client, buf, len, 0);
 	}
 		
 	fclose(resource) ;
+	return fEnd-fStart+1-fSend;
 }
 
 
@@ -377,7 +401,7 @@ void GetContentTypeByExName( char * path , char * ContentType)
 	else if ( ! strncasecmp( ExtName , ".mp1" , strlen(".mp1") ) ) strcpy( ContentType , "audio/mp1" ) ;
 	else if ( ! strncasecmp( ExtName , ".mp2" , strlen(".mp2") ) ) strcpy( ContentType , "audio/mp2" ) ;
 	else if ( ! strncasecmp( ExtName , ".mp2v" , strlen(".mp2v") ) ) strcpy( ContentType , "video/mpeg" ) ;
-	else if ( ! strncasecmp( ExtName , ".mp3" , strlen(".mp3") ) ) strcpy( ContentType , "audio/mp3" ) ;
+	else if ( ! strncasecmp( ExtName , ".mp3" , strlen(".mp3") ) ) strcpy( ContentType , "audio/mpeg" ) ;
 	else if ( ! strncasecmp( ExtName , ".mp4" , strlen(".mp4") ) ) strcpy( ContentType , "video/mp4" ) ;
 	else if ( ! strncasecmp( ExtName , ".mpa" , strlen(".mpa") ) ) strcpy( ContentType , "video/x-mpg" ) ;
 	else if ( ! strncasecmp( ExtName , ".mpd" , strlen(".mpd") ) ) strcpy( ContentType , "application/-project" ) ;
@@ -669,39 +693,55 @@ void DealPath(char * path )
 
 }
 
+void DelRepeatedChar( char * buffer , char c )
+{
+	int i , j , k ;
+	i = 0 ;
+	
+	while( buffer[i] != '\0' )
+	{
+		if( buffer[i] == c && buffer[i+1] == c) 
+		{
+			j = i;
+			do
+			{
+				k=j+1;
+				buffer[j] = buffer[k] ;
+				j++ ;
+			}while(buffer[j] != '\0') ;
+		}
+		else
+		{
+			i++ ;
+		}
+	}
+	
+}
+
+int isFileExist(char * filePath)
+{
+	struct stat st;
+	if( stat(filePath, &st) == -1 ) 
+	{
+		return 0 ;
+	}
+	if((st.st_mode & S_IFMT) == S_IFDIR)
+	{
+		return 2 ;
+	}
+	return 1 ;
+}
+
 
 void execCgiBin(int client , char * FullPath , char * REQUEST_METHOD , char *  QUERY_STRING )
 {
-	char buffer[1024];
 	int cgi_output[2];
 	int cgi_input[2];
 	pid_t pid;
 	int status;
-	int i , res;
+	int i;
 	char c;
 	int content_length = -1;
-	
-	char HTTP_HOST[100] , HTTP_CACHE_CONTROL[100], HTTP_ACCEPT_ENCODING[100], HTTP_USER_AGENT[1000] , HTTP_ORIGIN[256] , HTTP_CONNECTION[100] , HTTP_ACCEPT_LANGUAGE[100] , HTTP_REFERER[1000] , HTTP_ACCEPT[200] , CONTENT_LENGTH[100] , CONTENT_TYPE[200] , HTTP_COOKIE[1000] ;
-	
-	while ( ( res = ReadOneLine( client , buffer , sizeof(buffer) ) ) > 0 )
-	{
-	//	printf("=====Receive(%d):%s\n===========================\n",clientfd,buffer) ; 
-		if( buffer[0] == 0x0a ) break ;
-		
-		if( ! strncasecmp(buffer,"Host:", 5) ) GetPara(buffer,HTTP_HOST, 6 ) ;
-		else if( ! strncasecmp(buffer,"Connection:", 11) ) GetPara(buffer,HTTP_CONNECTION, 12 ) ;
-		else if( ! strncasecmp(buffer,"Content-Length:", 15) ) GetPara(buffer,CONTENT_LENGTH, 16 ) ;
-		else if( ! strncasecmp(buffer,"Cache-Control:", 14) ) GetPara(buffer,HTTP_CACHE_CONTROL, 15 ) ;
-		else if( ! strncasecmp(buffer,"Accept:", 7) ) GetPara(buffer,HTTP_ACCEPT, 8 ) ;
-		else if( ! strncasecmp(buffer,"Origin:", 7) ) GetPara(buffer,HTTP_ORIGIN, 8 ) ;
-		else if( ! strncasecmp(buffer,"User-Agent:", 11) ) GetPara(buffer,HTTP_USER_AGENT, 12 ) ;
-		else if( ! strncasecmp(buffer,"Content-Type:", 13) ) GetPara(buffer,CONTENT_TYPE, 14 ) ;
-		else if( ! strncasecmp(buffer,"Referer:", 8) ) GetPara(buffer,HTTP_REFERER, 9 ) ;
-		else if( ! strncasecmp(buffer,"Accept-Encoding:", 16) ) GetPara(buffer,HTTP_ACCEPT_ENCODING, 17 ) ;
-		else if( ! strncasecmp(buffer,"Accept-Language:", 16) ) GetPara(buffer,HTTP_ACCEPT_LANGUAGE, 17 ) ;
-		else if( ! strncasecmp(buffer,"Cookie:", 7) ) GetPara(buffer,HTTP_COOKIE, 8 ) ;
-	}
-	//printf( "THREAD[%d] :   HTTP_HOST =  %s , HTTP_CACHE_CONTROL =  %s , HTTP_ACCEPT_ENCODING =  %s , HTTP_USER_AGENT =  %s , HTTP_ORIGIN =  %s , HTTP_CONNECTION =  %s , HTTP_ACCEPT_LANGUAGE =  %s , HTTP_REFERER =  %s , HTTP_ACCEPT =  %s , CONTENT_LENGTH =  %s , CONTENT_TYPE =  %s ! \n",client , HTTP_HOST,  HTTP_CACHE_CONTROL,  HTTP_ACCEPT_ENCODING,  HTTP_USER_AGENT,  HTTP_ORIGIN,  HTTP_CONNECTION,  HTTP_ACCEPT_LANGUAGE,  HTTP_REFERER,  HTTP_ACCEPT,  CONTENT_LENGTH,  CONTENT_TYPE  ) ;
 	
 	content_length = atoi(CONTENT_LENGTH) ;
 	
@@ -799,7 +839,9 @@ void execCgiBin(int client , char * FullPath , char * REQUEST_METHOD , char *  Q
 			write(cgi_input[1], &c, 1);
 		}
 		
-		SendOkHeaders(client) ;
+		char buf[BUFFER_SIZE];
+		sprintf( buf ,"HTTP/1.0 200 OK\r\nServer: %s\r\nConnection: close\r\n" , SERVER_VERSION );
+		send(client, buf, strlen(buf), 0);
 		
 		// read child result 
 		//printf("CGI_RESULT(%d): BEGIN\n",client) ;
@@ -816,49 +858,10 @@ void execCgiBin(int client , char * FullPath , char * REQUEST_METHOD , char *  Q
 	}
 }
 
-void DelRepeatedChar( char * buffer , char c )
-{
-	int i , j , k ;
-	i = 0 ;
-	
-	while( buffer[i] != '\0' )
-	{
-		if( buffer[i] == c && buffer[i+1] == c) 
-		{
-			j = i;
-			do
-			{
-				k=j+1;
-				buffer[j] = buffer[k] ;
-				j++ ;
-			}while(buffer[j] != '\0') ;
-		}
-		else
-		{
-			i++ ;
-		}
-	}
-	
-}
-
-int isFileExist(char * filePath)
-{
-	struct stat st;
-	if( stat(filePath, &st) == -1 ) 
-	{
-		return 0 ;
-	}
-	if((st.st_mode & S_IFMT) == S_IFDIR)
-	{
-		return 2 ;
-	}
-	return 1 ;
-}
-
-void DealWithClient(int clientfd)
+void DealWithClient(int * client)
 {
 	char logstring[1024];
-	char buffer[1024] ;
+	char buffer[BUFFER_SIZE] ;
 	int i , k , res ;
 	int cgiFlag = 0 ;
 	char FullPath[1024] ;
@@ -867,6 +870,7 @@ void DealWithClient(int clientfd)
 	char * nstr ;
 	int flag_exist ;
 	char webSite[1024] ;
+	int clientfd = *client ;
 	
 	char REQUEST_METHOD[10] ;
 	char REQUEST_URI[1024] ;
@@ -878,8 +882,32 @@ void DealWithClient(int clientfd)
 	{
 
 		GetMethodUrl(buffer , REQUEST_METHOD , REQUEST_URI) ;
-		printf(  "[-------------------] THREAD[%d] : \"%s %s\" \n" , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
+		//printf(  "[-------------------] THREAD[%d] : \"%s %s\" \n" , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
 		sprintf( logstring , "THREAD[%d] : \"%s %s\" : " , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
+		
+			
+		while ( ( res = ReadOneLine( clientfd , buffer , sizeof(buffer) ) ) > 0 )
+		{
+		//	printf("=====Receive(%d):%s\n===========================\n",clientfd,buffer) ; 
+			if( buffer[0] == 0x0a ) break ;
+			
+			if( ! strncasecmp(buffer,"Host:", 5) ) GetPara(buffer,HTTP_HOST, 6 ) ;
+			else if( ! strncasecmp(buffer,"Connection:", 11) ) GetPara(buffer,HTTP_CONNECTION, 12 ) ;
+			else if( ! strncasecmp(buffer,"Content-Length:", 15) ) GetPara(buffer,CONTENT_LENGTH, 16 ) ;
+			else if( ! strncasecmp(buffer,"Cache-Control:", 14) ) GetPara(buffer,HTTP_CACHE_CONTROL, 15 ) ;
+			else if( ! strncasecmp(buffer,"Accept:", 7) ) GetPara(buffer,HTTP_ACCEPT, 8 ) ;
+			else if( ! strncasecmp(buffer,"Origin:", 7) ) GetPara(buffer,HTTP_ORIGIN, 8 ) ;
+			else if( ! strncasecmp(buffer,"User-Agent:", 11) ) GetPara(buffer,HTTP_USER_AGENT, 12 ) ;
+			else if( ! strncasecmp(buffer,"Content-Type:", 13) ) GetPara(buffer,CONTENT_TYPE, 14 ) ;
+			else if( ! strncasecmp(buffer,"Referer:", 8) ) GetPara(buffer,HTTP_REFERER, 9 ) ;
+			else if( ! strncasecmp(buffer,"Accept-Encoding:", 16) ) GetPara(buffer,HTTP_ACCEPT_ENCODING, 17 ) ;
+			else if( ! strncasecmp(buffer,"Accept-Language:", 16) ) GetPara(buffer,HTTP_ACCEPT_LANGUAGE, 17 ) ;
+			else if( ! strncasecmp(buffer,"Cookie:", 7) ) GetPara(buffer,HTTP_COOKIE, 8 ) ;
+			else if( ! strncasecmp(buffer,"Range:", 6) ) GetPara(buffer,HTTP_RANGE, 7 ) ;
+			else if( ! strncasecmp(buffer,"If-Range:", 9) ) GetPara(buffer,HTTP_IFRANGE, 10 ) ;
+		}
+		//printf( "THREAD[%d] :   HTTP_HOST =  %s , HTTP_CACHE_CONTROL =  %s , HTTP_ACCEPT_ENCODING =  %s , HTTP_USER_AGENT =  %s , HTTP_ORIGIN =  %s , HTTP_CONNECTION =  %s , HTTP_ACCEPT_LANGUAGE =  %s , HTTP_REFERER =  %s , HTTP_ACCEPT =  %s , CONTENT_LENGTH =  %s , CONTENT_TYPE =  %s ! \n",client , HTTP_HOST,  HTTP_CACHE_CONTROL,  HTTP_ACCEPT_ENCODING,  HTTP_USER_AGENT,  HTTP_ORIGIN,  HTTP_CONNECTION,  HTTP_ACCEPT_LANGUAGE,  HTTP_REFERER,  HTTP_ACCEPT,  CONTENT_LENGTH,  CONTENT_TYPE  ) ;
+	
 		
 		DelRepeatedChar(REQUEST_URI , '/') ;
 		
@@ -937,8 +965,6 @@ void DealWithClient(int clientfd)
 			
 			if((st.st_mode & S_IFMT) == S_IFDIR)
 			{
-				while ( ( res = ReadOneLine( clientfd , buffer , sizeof(buffer) ) ) > 0 )
-						if( buffer[0] == 0x0a ) break ;
 				strcat( SCRIPT_NAME , "/") ;
 				sprintf( logstring+(strlen(logstring)) ,"SendMovedPermanently : %s !\n" , SCRIPT_NAME ) ;
 				SendMovedPermanently(clientfd ,SCRIPT_NAME );
@@ -954,11 +980,7 @@ void DealWithClient(int clientfd)
 				}
 				else
 				{
-					while ( ( res = ReadOneLine( clientfd , buffer , sizeof(buffer) ) ) > 0 )
-						if( buffer[0] == 0x0a ) break ;
-					sprintf( logstring+(strlen(logstring)) , "SendHtmlContent : %s !\n" , FullPath ) ;
-					SendHtmlContent(clientfd , FullPath) ;
-					
+					sprintf( logstring+(strlen(logstring)) , "SendHtmlContent : %s (LEN: %ld)!\n" , FullPath , SendHtmlContent(clientfd , FullPath) ) ;
 				}
 			}
 		}
@@ -1010,7 +1032,7 @@ void server()
 			continue ;
 		}
 		
-		if (pthread_create(&clientThread , NULL, (void *)DealWithClient, (void *)clientfd) != 0)
+		if (pthread_create(&clientThread , NULL, (void *)DealWithClient, &clientfd) != 0)
 			perror("pthread_create");
 			
 	}
@@ -1021,7 +1043,7 @@ int main(int argc , char ** argv)
 {
 	char * str ;
 	SERVER_PORT = 8080 ;
-	sprintf( DOCUMENT_ROOT , "%s" , "/var/www/http/" ) ;
+	sprintf( DOCUMENT_ROOT , "%s" , "/var/www/html/" ) ;
 	sprintf( LOG_FILE_PATH , "%s" , "./HttpServer.log" ) ;
 	
 	if( argc > 1 )

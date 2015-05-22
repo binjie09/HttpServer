@@ -5,9 +5,12 @@ HttpServer.o : HttpServer.c HttpServer.h
 
 ReadConfFile.o : ReadConfFile.c ReadConfFile.h
 	gcc -g -W -Wall -c ReadConfFile.c -o ReadConfFile.o
+	
+MD5: MD5.c MD5.h
+	gcc -g -W -Wall -c MD5.c -o MD5.o
 
-HttpServer : ReadConfFile.o HttpServer.o
-	gcc -g -W -Wall -o HttpServer HttpServer.o ReadConfFile.o -lpthread
+HttpServer : ReadConfFile.o MD5.o HttpServer.o 
+	gcc -g -W -Wall -o HttpServer HttpServer.o ReadConfFile.o MD5.o -lpthread
 
 
 
