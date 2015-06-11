@@ -176,7 +176,7 @@ long SendHtmlContent(int client, char * path )
 	long fSend = 0 ;
 	
 	GetContentTypeByExName(path , ContentType ) ;
-	//printf( "\tContentType : %s\n" , ContentType ) ;
+	if( DEBUG_MODE > 0 )  printf( "[-------------------] THREAD[%d] : ContentType = %s\n" , client,ContentType ) ;
 	resource = fopen( path , "rb") ;
 
 	//Get File Size 
@@ -195,7 +195,7 @@ long SendHtmlContent(int client, char * path )
 		if( ! strncasecmp( HTTP_IFRANGE ,buf , strlen(HTTP_IFRANGE) )  ) 
 		{
 			flag = 1 ;
-			printf( "===> [%d] HTTP_RANGE: %s\n", client, HTTP_RANGE) ;
+			if( DEBUG_MODE > 0 ) printf( "[-------------------] THREAD[%d] : HTTP_RANGE = %s\n", client, HTTP_RANGE) ;
 			sscanf(HTTP_RANGE,"bytes=%ld-%ld",&fStart,&fEnd) ;
 		}
 	}
@@ -207,10 +207,13 @@ long SendHtmlContent(int client, char * path )
 	
 	
 	sprintf( buf ,"HTTP/1.0 200 OK\r\nServer: %s\r\nConnection: close\r\nContent-Type: %s\r\nETag: \"%s\"\r\nAccept-Ranges: bytes\r\nContent-Length: %ld\r\n" , SERVER_VERSION ,ContentType,fileMD5,fSend);
+	if( DEBUG_MODE > 1 ) printf( "[-------------------] THREAD[%d] : SEND ======================\n%s============================================\n" ,client , buf ) ;
 	send(client, buf, strlen(buf), 0);	
+	
 	if( flag == 1 ) 
 	{
 		sprintf( buf ,"Content-Range: bytes %ld-%ld/%ld\r\n",fStart,fEnd,fileLength) ;
+		if( DEBUG_MODE > 1 ) printf( "[-------------------] THREAD[%d] : SEND ======================\n%s============================================\n" ,client , buf ) ;
 		send(client, buf, strlen(buf), 0);	
 	}
 	strcpy(buf, "\r\n");
@@ -223,8 +226,6 @@ long SendHtmlContent(int client, char * path )
 		
 		if(  fSend > BUFFER_SIZE  ) len = BUFFER_SIZE ;
 		else len = fSend ;
-		//printf( "==================================> %ld  -- %d   ---  %d \n" ,fSend  , len , client ) ;
-
 		
 		len = fread( buf , sizeof(char) , len , resource) ;
 		if( send(client, buf, len, 0) < 0 )
@@ -234,6 +235,8 @@ long SendHtmlContent(int client, char * path )
 		
 		fSend -= len ;
 		
+		if( DEBUG_MODE > 2 ) printf( "[-------------------] THREAD[%d] : Send = %ld ; fSend = %ld  ; len = %d\n" ,client , fileLength -fSend , fSend  , len ) ;
+
 	}
 		
 	fclose(resource) ;
@@ -880,15 +883,15 @@ void DealWithClient(int * client)
 	res = ReadOneLine( clientfd , buffer , sizeof(buffer) )  ;
 	if(res > 0 )
 	{
-
+		if( DEBUG_MODE > 1 ) printf("[-------------------] THREAD[%d] : Receive --> %s",clientfd,buffer) ; 
 		GetMethodUrl(buffer , REQUEST_METHOD , REQUEST_URI) ;
-		//printf(  "[-------------------] THREAD[%d] : \"%s %s\" \n" , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
+		if( DEBUG_MODE > 0 ) printf(  "[-------------------] THREAD[%d] : REQUEST_METHOD = %s ; REQUEST_URI = %s\" \n" , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
 		sprintf( logstring , "THREAD[%d] : \"%s %s\" : " , clientfd , REQUEST_METHOD , REQUEST_URI ) ;
 		
 			
 		while ( ( res = ReadOneLine( clientfd , buffer , sizeof(buffer) ) ) > 0 )
 		{
-		//	printf("=====Receive(%d):%s\n===========================\n",clientfd,buffer) ; 
+			if( DEBUG_MODE > 1 ) printf("[-------------------] THREAD[%d] : Receive --> %s",clientfd,buffer) ; 
 			if( buffer[0] == 0x0a ) break ;
 			
 			if( ! strncasecmp(buffer,"Host:", 5) ) GetPara(buffer,HTTP_HOST, 6 ) ;
@@ -906,7 +909,7 @@ void DealWithClient(int * client)
 			else if( ! strncasecmp(buffer,"Range:", 6) ) GetPara(buffer,HTTP_RANGE, 7 ) ;
 			else if( ! strncasecmp(buffer,"If-Range:", 9) ) GetPara(buffer,HTTP_IFRANGE, 10 ) ;
 		}
-		//printf( "THREAD[%d] :   HTTP_HOST =  %s , HTTP_CACHE_CONTROL =  %s , HTTP_ACCEPT_ENCODING =  %s , HTTP_USER_AGENT =  %s , HTTP_ORIGIN =  %s , HTTP_CONNECTION =  %s , HTTP_ACCEPT_LANGUAGE =  %s , HTTP_REFERER =  %s , HTTP_ACCEPT =  %s , CONTENT_LENGTH =  %s , CONTENT_TYPE =  %s ! \n",client , HTTP_HOST,  HTTP_CACHE_CONTROL,  HTTP_ACCEPT_ENCODING,  HTTP_USER_AGENT,  HTTP_ORIGIN,  HTTP_CONNECTION,  HTTP_ACCEPT_LANGUAGE,  HTTP_REFERER,  HTTP_ACCEPT,  CONTENT_LENGTH,  CONTENT_TYPE  ) ;
+		if( DEBUG_MODE > 0 ) printf( "[-------------------] THREAD[%d] :   HTTP_HOST =  %s , HTTP_CACHE_CONTROL =  %s , HTTP_ACCEPT_ENCODING =  %s , HTTP_USER_AGENT =  %s , HTTP_ORIGIN =  %s , HTTP_CONNECTION =  %s , HTTP_ACCEPT_LANGUAGE =  %s , HTTP_REFERER =  %s , HTTP_ACCEPT =  %s , CONTENT_LENGTH =  %s , CONTENT_TYPE =  %s ! \n",clientfd , HTTP_HOST,  HTTP_CACHE_CONTROL,  HTTP_ACCEPT_ENCODING,  HTTP_USER_AGENT,  HTTP_ORIGIN,  HTTP_CONNECTION,  HTTP_ACCEPT_LANGUAGE,  HTTP_REFERER,  HTTP_ACCEPT,  CONTENT_LENGTH,  CONTENT_TYPE  ) ;
 	
 		
 		DelRepeatedChar(REQUEST_URI , '/') ;
@@ -1043,6 +1046,7 @@ int main(int argc , char ** argv)
 {
 	char * str ;
 	SERVER_PORT = 8080 ;
+	DEBUG_MODE = 0 ;
 	sprintf( DOCUMENT_ROOT , "%s" , "/var/www/html/" ) ;
 	sprintf( LOG_FILE_PATH , "%s" , "./HttpServer.log" ) ;
 	
@@ -1067,6 +1071,8 @@ int main(int argc , char ** argv)
 	if(str != NULL ) strcpy(DOCUMENT_ROOT , str);
 	str = QueryValue( "" , "LOG_FILE_PATH" ) ;
 	if(str != NULL ) strcpy(LOG_FILE_PATH , str);
+	str = QueryValue( "" , "DEBUG_MODE" ) ;
+	if(str != NULL ) DEBUG_MODE = atoi( str );
 	
 	
 	
